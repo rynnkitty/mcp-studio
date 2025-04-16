@@ -1,0 +1,99 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using Newtonsoft.Json;
+using Azure.AI.OpenAI;
+using OpenAI;
+using OpenAI.Managers;
+using OpenAI.ObjectModels;
+using OpenAI.ObjectModels.RequestModels;
+using MCP_Studio.Models; // 추가된 네임스페이스
+
+namespace MCP_Studio
+{
+    public partial class Form1 : Form
+    {
+        private AzureOpenAIClient azureClient;
+        private string modelId;
+
+        public Form1()
+        {
+            InitializeComponent();
+            // JSON 파일에서 OpenAI API 설정을 읽어옵니다.
+            var config = LoadOpenAiConfig("config.json");
+           // modelId = config.ModelID;
+            azureClient = new AzureOpenAIClient(new Uri(config.Endpoint), new Azure.AzureKeyCredential(config.ApiKey));
+        }
+
+        private async void button1_Click(object sender, EventArgs e)
+        {
+            await HandleChatAsync();
+        }
+
+        private void AppendToChat(string sender, string message)
+        {
+            richTextBox2.AppendText($"{sender}: {message}\n\n");
+            richTextBox2.ScrollToCaret();
+        }
+
+        private async Task HandleChatAsync()
+        {
+            var userInput = richTextBox1.Text.Trim();
+            if (string.IsNullOrEmpty(userInput))
+                return;
+
+            // 사용자 입력을 대화 기록에 추가
+            AppendToChat("You", userInput);
+            richTextBox1.Clear();
+
+            // ChatGPT API 호출
+            var chatMessages = new List<ChatMessage>
+                    {
+                        new ChatMessage(ChatRole.System, "당신은 도움이 되는 어시스턴트입니다."),
+                        new ChatMessage(ChatRole.User, userInput)
+                    };
+
+            var completionOptions = new ChatCompletionsOptions
+            {
+                Messages = chatMessages,
+                MaxTokens = 1000
+            };
+
+            var completionResult = await azureClient.GetChatCompletionsAsync(modelId, completionOptions);
+
+            if (completionResult.Value.Choices.Count > 0)
+            {
+                var response = completionResult.Value.Choices.First().Message.Content;
+                AppendToChat("ChatGPT", response);
+            }
+            else
+            {
+                AppendToChat("Error", "알 수 없는 오류 발생");
+            }
+        }
+
+        private async void richTextBox1_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter)
+            {
+                try
+                {
+                    await HandleChatAsync();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.ToString(), "오류");
+                }
+            }
+        }
+
+        private OpenAiConfig LoadOpenAiConfig(string filePath)
+        {
+            var json = File.ReadAllText(filePath);
+            return JsonConvert.DeserializeObject<OpenAiConfig>(json);
+        }
+    }
+}
