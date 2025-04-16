@@ -25,7 +25,7 @@ namespace MCP_Studio
         private List<ChatTool> _openAiTools;
         private bool _isProcessingRequest = false;
         private readonly object _lockObject = new object();
-
+        private OpenAiConfig aiConfig;
         public Form1()
         {
             InitializeComponent();
@@ -37,10 +37,10 @@ namespace MCP_Studio
             try
             {
                 // JSON 파일에서 OpenAI API 설정을 읽어옵니다.
-                var config = LoadOpenAiConfig("config.json");
-                _modelId = config.ModelID;
+                aiConfig = LoadOpenAiConfig("config.json");
+                _modelId = aiConfig.ModelID;
 
-                _chatClient = new ChatClient(config.ModelID, config.ApiKey);
+                _chatClient = new ChatClient(aiConfig.ModelID, aiConfig.ApiKey);
                 AppendToChat("System", "OpenAI 클라이언트 초기화 완료");
             }
             catch (FileNotFoundException ex)
@@ -213,6 +213,18 @@ namespace MCP_Studio
             // 도구 응답을 저장할 변수
             Dictionary<string, string> toolResponses = new Dictionary<string, string>();
 
+            // 마지막 사용자 메시지 찾기
+            string lastUserMessage = "";
+            for (int i = _chatHistory.Count - 1; i >= 0; i--)
+            {
+                if (_chatHistory[i] is UserChatMessage userMessage)
+                {
+                    // 사용자 메시지의 내용 가져오기 (SDK에 따라 속성명이 다를 수 있음)
+                    lastUserMessage = userMessage.Content.ToString();
+                    break;
+                }
+            }
+
             // 각 tool 호출에 대해 도구 실행
             foreach (var toolCall in toolCalls)
             {
@@ -247,34 +259,38 @@ namespace MCP_Studio
                 }
             }
 
-            // 원래 대화 내용 유지하면서 새로운 요청을 준비
-            // 도구 응답을 포함한 새 사용자 메시지 생성
-            StringBuilder toolResultsMessage = new StringBuilder();
-            toolResultsMessage.AppendLine("도구 실행 결과:");
-
-            foreach (var response in toolResponses)
-            {
-                toolResultsMessage.AppendLine($"- {response.Key}: {response.Value}");
-            }
-
-            // 사용자 메시지 추가
-            _chatHistory.Add(new UserChatMessage(toolResultsMessage.ToString()));
-
             try
             {
-                // 새 요청 생성 
-                // OpenAI API에서 사용하는 방식에 맞게 조정
-                // 필요한 경우 새로운 ChatCompletionRequest 객체 생성
+                // 완전히 새로운 대화 시작
+                var newConversation = new List<ChatMessage>();
 
-                // 예: options 객체가 어떻게 사용되는지 확인하고 필요시 수정
-                // var request = new ChatCompletionRequest { ... }; 
+                // 초기 시스템 메시지 추가 (선택사항)
+                newConversation.Add(new SystemChatMessage("이전에 실행된 도구의 결과를 설명해드립니다."));
 
-                // 직접 API 호출을 위한 대안 방법
-                // 여기에서는 SDK의 CompleteChatAsync 메서드를 사용하지만,
-                // 필요시 더 낮은 수준의 API 호출로 대체할 수 있음
-                var finalResponse = await _chatClient.CompleteChatAsync(_chatHistory, options);
+                // 원래 사용자 요청과 도구 결과를 하나의 메시지로 결합
+                StringBuilder combinedMessage = new StringBuilder();
+                combinedMessage.AppendLine($"원래 요청: {lastUserMessage}");
+                combinedMessage.AppendLine();
+                combinedMessage.AppendLine("도구 실행 결과:");
 
-                // 응답 처리 및 디버깅을 위한 추가 정보
+                foreach (var response in toolResponses)
+                {
+                    combinedMessage.AppendLine($"- {response.Key}: {response.Value}");
+                }
+
+                combinedMessage.AppendLine();
+                combinedMessage.AppendLine("이 결과에 기반해 응답해주세요.");
+
+                newConversation.Add(new UserChatMessage(combinedMessage.ToString()));
+
+                AppendToChat("System", "새로운 대화로 응답을 요청합니다.");
+
+                // 사용 중인 모델 로깅 (디버깅용)
+                AppendToChat("System", $"사용 중인 모델: {aiConfig.ModelID}");
+
+                // 새 대화로 API 호출
+                var finalResponse = await _chatClient.CompleteChatAsync(newConversation, options);
+
                 AppendToChat("System", $"응답 상태: {finalResponse.Value != null}");
 
                 if (finalResponse.Value != null &&
@@ -285,6 +301,16 @@ namespace MCP_Studio
                     if (!string.IsNullOrEmpty(assistantReply))
                     {
                         AppendToChat("ChatGPT", assistantReply);
+
+                        // 원래 채팅 이력에 도구 응답 및 어시스턴트 응답 추가
+                        // 도구 실행 결과를 포함한 사용자 메시지
+                        string toolResultsForHistory = "도구 실행 결과:\n";
+                        foreach (var response in toolResponses)
+                        {
+                            toolResultsForHistory += $"- {response.Key}: {response.Value}\n";
+                        }
+
+                        _chatHistory.Add(new UserChatMessage(toolResultsForHistory));
                         _chatHistory.Add(new AssistantChatMessage(assistantReply));
                     }
                     else
