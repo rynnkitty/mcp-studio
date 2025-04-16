@@ -210,12 +210,23 @@ namespace MCP_Studio
             // OpenAI SDK 2.1.0에서는 toolCalls의 실제 타입에 따라 처리 방법을 분기합니다
             AppendToChat("System", $"{toolCalls.Count}개의 도구 호출을 처리합니다...");
 
+            // 마지막 메시지가 assistant이고 tool_calls가 있는지 확인
+            var lastMessage = _chatHistory.LastOrDefault();
+            bool hasAssistantWithToolCalls = lastMessage != null &&
+                                            lastMessage is AssistantChatMessage &&
+                                            toolCalls != null &&
+                                            toolCalls.Count > 0;
+
+            // tool 메시지를 추가하기 전에 assistant의 tool_calls 메시지가 있는지 확인
+            if (!hasAssistantWithToolCalls)
+            {
+                AppendToChat("System", "Error: Cannot add tool message without preceding assistant message with tool_calls");
+                return;
+            }
+
             foreach (var toolCall in toolCalls)
             {
                 // 도구 호출 객체에서 필요한 데이터 추출
-                // 도구 호출 객체의 구조는 SDK 버전에 따라 다를 수 있으므로
-                // 리플렉션 또는 dynamic을 사용하여 속성을 추출합니다
-
                 dynamic dynamicToolCall = toolCall;
                 string functionName = "";
                 BinaryData argumentsBinaryData = null;
@@ -229,26 +240,7 @@ namespace MCP_Studio
 
                     // BinaryData를 UTF-8 문자열로 변환
                     string argumentsJson = argumentsBinaryData.ToString();
-                    // 도구 실행 및 응답 생성
-                    var parameters = JsonConvert.DeserializeObject<Dictionary<string, object>>(argumentsJson);
-                    var toolResponse = await _mcpClient.CallToolAsync(functionName, parameters);
-
-                    // 도구 응답 메시지 생성 및 추가
-                    var toolMessage = new ToolChatMessage(toolCallId, functionName, toolResponse);
-                    _chatHistory.Add(toolMessage);
-                }
-                catch (Exception ex)
-                {
-                    AppendToChat("System", $"도구 호출 구조 파싱 실패: {ex.Message}");
-                    continue;
-                }
-
-                AppendToChat("System", $"도구 호출: {functionName}");
-
-                try
-                {
-                    // BinaryData를 UTF-8 문자열로 변환
-                    string argumentsJson = argumentsBinaryData.ToString();
+                    AppendToChat("System", $"도구 호출: {functionName}");
                     AppendToChat("System", $"인자: {argumentsJson}");
 
                     // JSON 문자열을 Dictionary로 역직렬화
@@ -264,9 +256,15 @@ namespace MCP_Studio
                     string mcpResponse = await _mcpClient.CallToolAsync(functionName, parameters);
                     AppendToChat("System", $"도구 응답: {mcpResponse}");
 
-                    // 도구 응답을 채팅 이력에 추가
+                    // 도구 응답을 채팅 이력에 추가 - 중복 추가 방지
                     var toolMessage = new ToolChatMessage(toolCallId, functionName, mcpResponse);
-                    _chatHistory.Add(toolMessage);
+
+                    // 이미 같은 ID의 tool 메시지가 있는지 확인
+                    bool toolMessageExists = _chatHistory.Any(m => m is ToolChatMessage tm && tm.ToolCallId == toolCallId);
+                    if (!toolMessageExists)
+                    {
+                        _chatHistory.Add(toolMessage);
+                    }
                 }
                 catch (JsonException ex)
                 {
@@ -284,10 +282,6 @@ namespace MCP_Studio
             {
                 // 도구 호출 이후 최종 응답 요청
                 var finalResponse = await _chatClient.CompleteChatAsync(_chatHistory, options);
-
-                //// 어시스턴트 메시지 추가
-                //_chatHistory.Add(new AssistantChatMessage(finalResponse));
-
 
                 if (finalResponse.Value.Content != null && finalResponse.Value.Content.Count > 0)
                 {
