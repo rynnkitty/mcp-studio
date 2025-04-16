@@ -12,22 +12,27 @@ using ModelContextProtocol.Protocol.Transport;
 
 using OpenAI.Chat;
 using System.Text;
+using ModelContextProtocol.Protocol.Types;
 
 namespace MCP_Studio
 {
     public partial class Form1 : Form
     {
+        //OpenAI
         private ChatClient _chatClient;
         private List<ChatMessage> _chatHistory = new List<ChatMessage>();
         private string _modelId;
+        private OpenAiConfig aiConfig;
+        //MCP
+        private List<McpClientWrapper> _mcpClients = new List<McpClientWrapper>();
         private McpClientWrapper _mcpClient;
         private IList<McpClientTool> _tools;
         private List<ChatTool> _openAiTools;
+        private string _configPath = "mcp_config.json";
+        //
         private bool _isProcessingRequest = false;
         private readonly object _lockObject = new object();
-        private OpenAiConfig aiConfig;
-        // 클래스 상단에 필드 추가
-        // private List<ChatCompletionTool> _availableTools = new List<ChatCompletionTool>();
+
         public Form1()
         {
             InitializeComponent();
@@ -68,17 +73,112 @@ namespace MCP_Studio
         {
             try
             {
+                // 기존 mcpClient 정리
+                if (_mcpClient != null)
+                {
+                    await _mcpClient.DisposeAsync();
+                    _mcpClient = null;
+                }
+
+                // 기존 연결된 모든 클라이언트 해제
+                foreach (var client in _mcpClients)
+                {
+                    await client.DisposeAsync();
+                }
+                _mcpClients.Clear();
+
                 SetStatus("MCP 서버 초기화 중...");
                 richTextBox1.Enabled = false;
-                _mcpClient = new McpClientWrapper();
-                var (command, args) = McpConfigLoader.LoadMcpServerConfig("mcp_config.json", "everything");
 
-                await _mcpClient.InitializeAsync(command, args);
+                // 기존 클라이언트 정리
+                await CleanupMcpClientsAsync();
+                // 모든 서버 정보 로드
+                var servers = McpConfigLoader.LoadAllMcpServers(_configPath);
+                if (servers.Count == 0)
+                {
+                    toolStripStatusLabel1.Text = "구성된 MCP 서버가 없습니다.";
+                    return;
+                }
+                // 상태바 업데이트
+                toolStripStatusLabel1.Text = $"MCP 서버 {servers.Count}개를 불러오는 중...";
+                // 리스트박스 초기화
+                listBox1.Items.Clear();
+
+                // 각 서버에 대해 클라이언트 생성
+                foreach (var server in servers)
+                {
+                    var mcpClient = new McpClientWrapper();
+                    try
+                    {
+                        bool success = await mcpClient.InitializeAsync(server.Command, server.Args, server.Name);
+                        _mcpClients.Add(mcpClient);
+                        if (success)
+                        {
+                            // 리스트박스에 서버 이름 추가
+                            listBox1.Items.Add(server.Name);
+                            if (mcpClient != null)
+                            {
+                                // 서버 도구 목록 표시
+                                await DisplayServerToolsAsync(mcpClient);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        await mcpClient.DisposeAsync();
+                        toolStripStatusLabel1.Text = $"MCP 서버 '{server.Name}' 연결 실패: {ex.Message}";
+                    }
+                }
+
+                //_mcpClient = new McpClientWrapper();
+                //var (command, args) = McpConfigLoader.LoadMcpServerConfig("mcp_config.json", "everything");
+
+                //await _mcpClient.InitializeAsync(command, args);
 
                 AppendToChat("System", "MCP 클라이언트 초기화 완료");
 
+
+
+
+                richTextBox1.Enabled = true;
+                SetStatus("준비됨");
+            }
+            catch (FileNotFoundException ex)
+            {
+                HandleError("MCP 설정 파일을 찾을 수 없습니다.", ex);
+            }
+            catch (JsonException ex)
+            {
+                HandleError("MCP 설정 파일 형식이 잘못되었습니다.", ex);
+            }
+            catch (Exception ex)
+            {
+                HandleError("MCP 클라이언트 초기화 실패", ex);
+            }
+        }
+        private async Task CleanupMcpClientsAsync()
+        {
+            // 기존 mcpClient 정리
+            if (_mcpClient != null)
+            {
+                await _mcpClient.DisposeAsync();
+                _mcpClient = null;
+            }
+
+            // 기존 연결된 모든 클라이언트 해제
+            foreach (var client in _mcpClients)
+            {
+                await client.DisposeAsync();
+            }
+            _mcpClients.Clear();
+        }
+        private async Task DisplayServerToolsAsync(McpClientWrapper client)
+        {
+            try
+            {
                 // 사용 가능한 도구 목록 가져오기
-                var tools = await _mcpClient.ListToolsAsync();
+                var tools = await client.ListToolsAsync();
+
                 AppendToChat("System", $"{tools.Count}개의 도구를 찾았습니다.");
 
                 // 도구 목록이 성공적으로 가져와진 후에만 변환 작업 수행
@@ -99,20 +199,12 @@ namespace MCP_Studio
                     AppendToChat("System", "사용 가능한 도구가 없습니다.");
                     toolStripStatusLabel1.Text = "도구 없음";
                 }
-                richTextBox1.Enabled = true;
-                SetStatus("준비됨");
-            }
-            catch (FileNotFoundException ex)
-            {
-                HandleError("MCP 설정 파일을 찾을 수 없습니다.", ex);
-            }
-            catch (JsonException ex)
-            {
-                HandleError("MCP 설정 파일 형식이 잘못되었습니다.", ex);
+
+               
             }
             catch (Exception ex)
             {
-                HandleError("MCP 클라이언트 초기화 실패", ex);
+                richTextBox3.Text = $"도구 목록을 가져오는 중 오류 발생: {ex.Message}";
             }
         }
 
@@ -589,6 +681,30 @@ namespace MCP_Studio
             }
 
             base.OnFormClosing(e);
+        }
+
+        private async void listBox1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (listBox1.SelectedIndex >= 0 && listBox1.SelectedIndex < _mcpClients.Count)
+            {
+                McpClientWrapper mcpClient = _mcpClients[listBox1.SelectedIndex];
+
+                // 사용 가능한 도구 목록 가져오기
+                var tools = await mcpClient.ListToolsAsync();
+
+                richTextBox3.Clear();
+
+                richTextBox3.AppendText($"서버: {mcpClient.ServerName}\n");
+                richTextBox3.AppendText($"도구 수: {tools.Count}\n\n");
+
+                foreach (var tool in tools)
+                {
+                    richTextBox3.AppendText($"도구 이름: {tool.Name}\n");
+                    richTextBox3.AppendText($"설명: {tool.Description}\n");
+                    richTextBox3.AppendText("-----------------------------------\n");
+                }
+
+            }
         }
     }
 }

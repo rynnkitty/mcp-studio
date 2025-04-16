@@ -37,8 +37,8 @@
             tabControl1 = new TabControl();
             tabPage1 = new TabPage();
             tabPage2 = new TabPage();
-            listBox1 = new ListBox();
             richTextBox3 = new RichTextBox();
+            listBox1 = new ListBox();
             statusStrip1.SuspendLayout();
             tabControl1.SuspendLayout();
             tabPage1.SuspendLayout();
@@ -138,6 +138,15 @@
             tabPage2.Text = "MCP Servers";
             tabPage2.UseVisualStyleBackColor = true;
             // 
+            // richTextBox3
+            // 
+            richTextBox3.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
+            richTextBox3.Location = new Point(278, 16);
+            richTextBox3.Name = "richTextBox3";
+            richTextBox3.Size = new Size(509, 439);
+            richTextBox3.TabIndex = 1;
+            richTextBox3.Text = "";
+            // 
             // listBox1
             // 
             listBox1.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
@@ -147,15 +156,7 @@
             listBox1.Name = "listBox1";
             listBox1.Size = new Size(246, 439);
             listBox1.TabIndex = 0;
-            // 
-            // richTextBox3
-            // 
-            richTextBox3.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
-            richTextBox3.Location = new Point(278, 16);
-            richTextBox3.Name = "richTextBox3";
-            richTextBox3.Size = new Size(509, 439);
-            richTextBox3.TabIndex = 1;
-            richTextBox3.Text = "";
+            listBox1.SelectedIndexChanged += listBox1_SelectedIndexChanged;
             // 
             // Form1
             // 

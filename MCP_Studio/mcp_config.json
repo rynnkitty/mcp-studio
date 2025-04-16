@@ -1,10 +1,22 @@
 {
- "mcpServers": {
+  "mcpServers": {
     "everything": {
       "command": "npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-everything"
+      ]
+    },
+    "image_reader": {
+      "command": "npx",
+      "args": [ "-y", "mcp-image-reader" ]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/2106001/test"
       ]
     }
   }
