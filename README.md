@@ -7,6 +7,30 @@
    
 3. npm i @modelcontextprotocol/server-filesystem
    https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem
+//mcp_config.json
+{
+  "mcpServers": {
+    "everything": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-everything"
+      ]
+    },
+    "image_reader": {
+      "command": "npx",
+      "args": [ "-y", "mcp-image-reader" ]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/2106001/test"
+      ]
+    }
+  }
+}
 
 //SDK
 OpenAI SDK 2.1.0
