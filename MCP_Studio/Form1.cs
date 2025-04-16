@@ -26,6 +26,8 @@ namespace MCP_Studio
         private bool _isProcessingRequest = false;
         private readonly object _lockObject = new object();
         private OpenAiConfig aiConfig;
+        // 클래스 상단에 필드 추가
+        // private List<ChatCompletionTool> _availableTools = new List<ChatCompletionTool>();
         public Form1()
         {
             InitializeComponent();
@@ -67,13 +69,37 @@ namespace MCP_Studio
             try
             {
                 SetStatus("MCP 서버 초기화 중...");
-
+                richTextBox1.Enabled = false;
                 _mcpClient = new McpClientWrapper();
                 var (command, args) = McpConfigLoader.LoadMcpServerConfig("mcp_config.json", "everything");
 
                 await _mcpClient.InitializeAsync(command, args);
 
                 AppendToChat("System", "MCP 클라이언트 초기화 완료");
+
+                // 사용 가능한 도구 목록 가져오기
+                var tools = await _mcpClient.ListToolsAsync();
+                AppendToChat("System", $"{tools.Count}개의 도구를 찾았습니다.");
+
+                // 도구 목록이 성공적으로 가져와진 후에만 변환 작업 수행
+                if (tools != null && tools.Count > 0)
+                {
+                    // 사용 가능한 도구를 OpenAI 형식으로 변환
+                    _openAiTools = ConvertMcpToolsToOpenAiTools(tools);
+                    AppendToChat("System", $"{_openAiTools.Count}개의 도구를 OpenAI 형식으로 변환했습니다.");
+
+                    // 도구 이름과 설명 로깅
+                    foreach (var tool in _openAiTools)
+                    {
+                        AppendToChat("System", $"도구: {tool.FunctionName}");
+                    }
+                }
+                else
+                {
+                    AppendToChat("System", "사용 가능한 도구가 없습니다.");
+                    toolStripStatusLabel1.Text = "도구 없음";
+                }
+                richTextBox1.Enabled = true;
                 SetStatus("준비됨");
             }
             catch (FileNotFoundException ex)
@@ -133,8 +159,8 @@ namespace MCP_Studio
             {
                 Invoke(new Action(() => SetStatus(status)));
                 return;
-            }           
-            toolStripStatusLabel1.Text = status;          
+            }
+            toolStripStatusLabel1.Text = status;
         }
 
         private async Task HandleChatAsync()
@@ -447,6 +473,45 @@ namespace MCP_Studio
             return config;
         }
 
+        // MCP 도구를 OpenAI 형식으로 변환하는 함수 추가
+        private List<ChatTool> ConvertMcpToolsToOpenAiTools(IList<McpClientTool> mcpTools)
+        {
+            var openAiTools = new List<ChatTool>();
+
+            if (mcpTools == null || mcpTools.Count == 0)
+            {
+                AppendToChat("System", "사용 가능한 도구가 없습니다.");
+                return null;
+            }
+            // MCP 도구를 OpenAI 툴로 변환합니다.
+            openAiTools = mcpTools.Select(tool =>
+            {
+                try
+                {
+                    // MCP 도구의 입력 스키마를 JSON 문자열로 변환합니다.
+                    string rawJsonSchema = tool.ProtocolTool.InputSchema.GetRawText();
+
+                    // JSON 문자열을 BinaryData로 변환합니다.
+                    var parameters = BinaryData.FromString(rawJsonSchema);
+
+                    // OpenAI 툴을 생성합니다.
+                    return ChatTool.CreateFunctionTool(
+                        functionName: tool.Name,
+                        functionDescription: tool.Description,
+                        functionParameters: parameters
+                    );
+                }
+                catch (Exception ex)
+                {
+                    AppendToChat("System", $"도구 {tool.Name} 변환 실패: {ex.Message}");
+                    return null;
+                }
+            })
+            .Where(tool => tool != null)
+            .ToList();
+
+            return openAiTools;
+        }
         private async void button2_Click(object sender, EventArgs e)
         {
             if (_mcpClient == null)
