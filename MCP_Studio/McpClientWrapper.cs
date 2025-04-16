@@ -13,8 +13,7 @@ namespace MCP_Studio
         public async Task<bool> InitializeAsync(string command, string[] args, string serverName = "")
         {
             ServerName = serverName;
-            ServerName = serverName;
-
+           
             for (int attempt = 1; attempt <= retryCount; attempt++)
             {
                 try
