@@ -7,6 +7,8 @@
    
 3. npm i @modelcontextprotocol/server-filesystem
    https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem
+
+
 //mcp_config.json
 {
   "mcpServers": {
@@ -33,10 +35,12 @@
 }
 
 //SDK
+
 OpenAI SDK 2.1.0
 
 //
 config.json 파일에 ApiKey를 입력해야함.
+
 {
   "ModelID": "gpt-3.5-turbo",
   "ApiKey": "<당신의 API KEY>",
