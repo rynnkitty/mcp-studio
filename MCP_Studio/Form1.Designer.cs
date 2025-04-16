@@ -62,7 +62,7 @@
             button1.Name = "button1";
             button1.Size = new Size(71, 53);
             button1.TabIndex = 1;
-            button1.Text = "button1";
+            button1.Text = "대화";
             button1.UseVisualStyleBackColor = true;
             button1.Click += button1_Click;
             // 
@@ -82,7 +82,7 @@
             button2.Name = "button2";
             button2.Size = new Size(75, 54);
             button2.TabIndex = 3;
-            button2.Text = "button2";
+            button2.Text = "테스트";
             button2.UseVisualStyleBackColor = true;
             button2.Click += button2_Click;
             // 
