@@ -70,6 +70,129 @@ namespace MCP_Studio
         {
             await InitializeMcpClientAsync();
         }
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            // 리소스 정리
+            try
+            {
+                // _mcpClient?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                LogError("MCP 클라이언트 종료 중 오류가 발생했습니다.", ex);
+            }
+
+            base.OnFormClosing(e);
+        }
+        #region 이벤트 함수
+        private async void button1_Click(object sender, EventArgs e)
+        {
+            if (_isProcessingRequest)
+            {
+                MessageBox.Show("이전 요청이 처리 중입니다. 잠시 기다려주세요.", "처리 중", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                _isProcessingRequest = true;
+                SetStatus("처리 중...");
+                await HandleChatAsync();
+            }
+            catch (Exception ex)
+            {
+                HandleError("채팅 처리 중 오류가 발생했습니다.", ex);
+            }
+            finally
+            {
+                _isProcessingRequest = false;
+                SetStatus("준비됨");
+            }
+        }
+        private async void richTextBox1_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter && !e.Shift)
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+
+                if (_isProcessingRequest)
+                {
+                    MessageBox.Show("이전 요청이 처리 중입니다. 잠시 기다려주세요.", "처리 중", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                try
+                {
+                    _isProcessingRequest = true;
+                    SetStatus("처리 중...");
+                    await HandleChatAsync();
+                }
+                catch (Exception ex)
+                {
+                    HandleError("채팅 처리 중 오류가 발생했습니다.", ex);
+                }
+                finally
+                {
+                    _isProcessingRequest = false;
+                    SetStatus("준비됨");
+                }
+            }
+        }
+        private async void button2_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                string toolName = "echo"; // 검색할 도구 이름
+
+                var clientWithTool = await FindClientByToolNameAsync(toolName);
+
+                if (clientWithTool != null)
+                {
+                    // 도구를 포함하는 클라이언트 발견
+                    MessageBox.Show($"도구 '{toolName}'은(는) '{clientWithTool.ServerName}' 서버에 있습니다.", "도구 찾기 결과");
+
+                    // 필요하다면 해당 클라이언트를 활성 클라이언트로 설정
+                    _mcpClient = clientWithTool;
+
+                    // UI 업데이트 등 추가 작업...
+                }
+                else
+                {
+                    MessageBox.Show($"도구 '{toolName}'을(를) 가진 서버를 찾을 수 없습니다.", "도구 찾기 결과", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                HandleError("도구 목록을 불러오는 중 오류가 발생했습니다.", ex);
+            }
+        }
+        private async void listBox1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (listBox1.SelectedIndex >= 0 && listBox1.SelectedIndex < _mcpClients.Count)
+            {
+                McpClientWrapper mcpClient = _mcpClients[listBox1.SelectedIndex];
+
+                // 사용 가능한 도구 목록 가져오기
+                var tools = await mcpClient.ListToolsAsync();
+
+                richTextBox3.Clear();
+
+                richTextBox3.AppendText($"서버: {mcpClient.ServerName}\n");
+                richTextBox3.AppendText($"도구 수: {tools.Count}\n\n");
+
+                foreach (var tool in tools)
+                {
+                    richTextBox3.AppendText($"도구 이름: {tool.Name}\n");
+                    richTextBox3.AppendText($"설명: {tool.Description}\n");
+                    richTextBox3.AppendText("-----------------------------------\n");
+                }
+
+            }
+        }
+        #endregion
+
+        #region 일반 함수
         private string ConvertToWindowsPath(string unixPath)
         {
             if (string.IsNullOrEmpty(unixPath))
@@ -100,6 +223,119 @@ namespace MCP_Studio
             // 단순 변환: 슬래시를 백슬래시로 변경
             return unixPath.Replace('/', '\\');
         }
+        private void AppendToChat(string sender, string message)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() => AppendToChat(sender, message)));
+                return;
+            }
+
+            richTextBox2.AppendText($"{sender}: {message}\n\n");
+            richTextBox2.ScrollToCaret();
+        }
+        private void SetStatus(string status)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() => SetStatus(status)));
+                return;
+            }
+            toolStripStatusLabel1.Text = status;
+        }
+        private void HandleError(string message, Exception ex)
+        {
+            string errorDetails = ex != null ? $"\n\n상세 오류: {ex.Message}" : "";
+            AppendToChat("Error", message + errorDetails);
+
+            // 중요 오류는 메시지 박스로도 표시
+            if (ex != null && !(ex is FileNotFoundException || ex is JsonException))
+            {
+                MessageBox.Show(message + errorDetails, "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
+            // 로그 파일에 오류 기록
+            LogError(message, ex);
+        }
+        private void LogError(string message, Exception ex)
+        {
+            try
+            {
+                string logFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
+                Directory.CreateDirectory(logFolder);
+
+                string logFile = Path.Combine(logFolder, $"error_{DateTime.Now:yyyyMMdd}.log");
+                string logEntry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
+
+                if (ex != null)
+                {
+                    logEntry += $"\nException: {ex.GetType().Name}\nMessage: {ex.Message}\nStackTrace: {ex.StackTrace}";
+                }
+
+                File.AppendAllText(logFile, logEntry + "\n\n");
+            }
+            catch
+            {
+                // 로깅 중 오류 발생 시 무시 (로깅 실패가 애플리케이션 실행에 영향을 주지 않도록)
+            }
+        }
+        private OpenAiConfig LoadOpenAiConfig(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                throw new FileNotFoundException($"설정 파일을 찾을 수 없습니다: {filePath}");
+            }
+
+            var json = File.ReadAllText(filePath);
+            var config = JsonConvert.DeserializeObject<OpenAiConfig>(json);
+
+            if (string.IsNullOrEmpty(config.ApiKey) || string.IsNullOrEmpty(config.ModelID))
+            {
+                throw new InvalidOperationException("설정 파일에 필수 정보(ApiKey 또는 ModelID)가 누락되었습니다.");
+            }
+
+            return config;
+        }
+        private void UpdateMcpConfigForWindows()
+        {
+            try
+            {
+                string configPath = "mcp_config.json";
+                string json = File.ReadAllText(configPath);
+                JObject config = JObject.Parse(json);
+
+                var servers = config["mcpServers"];
+                if (servers != null)
+                {
+                    // filesystem 서버 구성 확인
+                    var fsServer = servers["filesystem"];
+                    if (fsServer != null)
+                    {
+                        var args = fsServer["args"] as JArray;
+                        if (args != null && args.Count > 0)
+                        {
+                            // 마지막 인자가 경로인 경우 Windows 호환되게 변경
+                            string lastArg = args[args.Count - 1].ToString();
+                            if (lastArg.StartsWith("/"))
+                            {
+                                string winPath = ConvertToWindowsPath(lastArg);
+                                args[args.Count - 1] = winPath;
+
+                                // 변경된 구성 저장
+                                File.WriteAllText(configPath, config.ToString());
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"MCP 구성 파일 수정 오류: {ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+        #endregion
+
+        #region MCP 함수
         private async Task InitializeMcpClientAsync()
         {
             try
@@ -310,54 +546,48 @@ namespace MCP_Studio
             // 일치하는 도구를 찾지 못한 경우
             return null;
         }
-
-        private async void button1_Click(object sender, EventArgs e)
+        // MCP 도구를 OpenAI 형식으로 변환하는 함수 추가
+        private List<ChatTool> ConvertMcpToolsToOpenAiTools(IList<McpClientTool> mcpTools)
         {
-            if (_isProcessingRequest)
-            {
-                MessageBox.Show("이전 요청이 처리 중입니다. 잠시 기다려주세요.", "처리 중", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
+            var openAiTools = new List<ChatTool>();
 
-            try
+            if (mcpTools == null || mcpTools.Count == 0)
             {
-                _isProcessingRequest = true;
-                SetStatus("처리 중...");
-                await HandleChatAsync();
+                AppendToChat("System", "사용 가능한 도구가 없습니다.");
+                return null;
             }
-            catch (Exception ex)
+            // MCP 도구를 OpenAI 툴로 변환합니다.
+            openAiTools = mcpTools.Select(tool =>
             {
-                HandleError("채팅 처리 중 오류가 발생했습니다.", ex);
-            }
-            finally
-            {
-                _isProcessingRequest = false;
-                SetStatus("준비됨");
-            }
+                try
+                {
+                    // MCP 도구의 입력 스키마를 JSON 문자열로 변환합니다.
+                    string rawJsonSchema = tool.ProtocolTool.InputSchema.GetRawText();
+
+                    // JSON 문자열을 BinaryData로 변환합니다.
+                    var parameters = BinaryData.FromString(rawJsonSchema);
+
+                    // OpenAI 툴을 생성합니다.
+                    return ChatTool.CreateFunctionTool(
+                        functionName: tool.Name,
+                        functionDescription: tool.Description,
+                        functionParameters: parameters
+                    );
+                }
+                catch (Exception ex)
+                {
+                    AppendToChat("System", $"도구 {tool.Name} 변환 실패: {ex.Message}");
+                    return null;
+                }
+            })
+            .Where(tool => tool != null)
+            .ToList();
+
+            return openAiTools;
         }
+        #endregion
 
-        private void AppendToChat(string sender, string message)
-        {
-            if (InvokeRequired)
-            {
-                Invoke(new Action(() => AppendToChat(sender, message)));
-                return;
-            }
-
-            richTextBox2.AppendText($"{sender}: {message}\n\n");
-            richTextBox2.ScrollToCaret();
-        }
-
-        private void SetStatus(string status)
-        {
-            if (InvokeRequired)
-            {
-                Invoke(new Action(() => SetStatus(status)));
-                return;
-            }
-            toolStripStatusLabel1.Text = status;
-        }
-
+        #region GPT 함수
         private async Task HandleChatAsync()
         {
             // 입력 유효성 검사
@@ -582,236 +812,13 @@ namespace MCP_Studio
                 AppendToChat("System", "GPT 응답이 없습니다.");
             }
         }
+        #endregion
 
-        private void HandleError(string message, Exception ex)
-        {
-            string errorDetails = ex != null ? $"\n\n상세 오류: {ex.Message}" : "";
-            AppendToChat("Error", message + errorDetails);
 
-            // 중요 오류는 메시지 박스로도 표시
-            if (ex != null && !(ex is FileNotFoundException || ex is JsonException))
-            {
-                MessageBox.Show(message + errorDetails, "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
 
-            // 로그 파일에 오류 기록
-            LogError(message, ex);
-        }
 
-        private void LogError(string message, Exception ex)
-        {
-            try
-            {
-                string logFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
-                Directory.CreateDirectory(logFolder);
 
-                string logFile = Path.Combine(logFolder, $"error_{DateTime.Now:yyyyMMdd}.log");
-                string logEntry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
 
-                if (ex != null)
-                {
-                    logEntry += $"\nException: {ex.GetType().Name}\nMessage: {ex.Message}\nStackTrace: {ex.StackTrace}";
-                }
 
-                File.AppendAllText(logFile, logEntry + "\n\n");
-            }
-            catch
-            {
-                // 로깅 중 오류 발생 시 무시 (로깅 실패가 애플리케이션 실행에 영향을 주지 않도록)
-            }
-        }
-
-        private async void richTextBox1_KeyUp(object sender, KeyEventArgs e)
-        {
-            if (e.KeyCode == Keys.Enter && !e.Shift)
-            {
-                e.Handled = true;
-                e.SuppressKeyPress = true;
-
-                if (_isProcessingRequest)
-                {
-                    MessageBox.Show("이전 요청이 처리 중입니다. 잠시 기다려주세요.", "처리 중", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-
-                try
-                {
-                    _isProcessingRequest = true;
-                    SetStatus("처리 중...");
-                    await HandleChatAsync();
-                }
-                catch (Exception ex)
-                {
-                    HandleError("채팅 처리 중 오류가 발생했습니다.", ex);
-                }
-                finally
-                {
-                    _isProcessingRequest = false;
-                    SetStatus("준비됨");
-                }
-            }
-        }
-
-        private OpenAiConfig LoadOpenAiConfig(string filePath)
-        {
-            if (!File.Exists(filePath))
-            {
-                throw new FileNotFoundException($"설정 파일을 찾을 수 없습니다: {filePath}");
-            }
-
-            var json = File.ReadAllText(filePath);
-            var config = JsonConvert.DeserializeObject<OpenAiConfig>(json);
-
-            if (string.IsNullOrEmpty(config.ApiKey) || string.IsNullOrEmpty(config.ModelID))
-            {
-                throw new InvalidOperationException("설정 파일에 필수 정보(ApiKey 또는 ModelID)가 누락되었습니다.");
-            }
-
-            return config;
-        }
-
-        // MCP 도구를 OpenAI 형식으로 변환하는 함수 추가
-        private List<ChatTool> ConvertMcpToolsToOpenAiTools(IList<McpClientTool> mcpTools)
-        {
-            var openAiTools = new List<ChatTool>();
-
-            if (mcpTools == null || mcpTools.Count == 0)
-            {
-                AppendToChat("System", "사용 가능한 도구가 없습니다.");
-                return null;
-            }
-            // MCP 도구를 OpenAI 툴로 변환합니다.
-            openAiTools = mcpTools.Select(tool =>
-            {
-                try
-                {
-                    // MCP 도구의 입력 스키마를 JSON 문자열로 변환합니다.
-                    string rawJsonSchema = tool.ProtocolTool.InputSchema.GetRawText();
-
-                    // JSON 문자열을 BinaryData로 변환합니다.
-                    var parameters = BinaryData.FromString(rawJsonSchema);
-
-                    // OpenAI 툴을 생성합니다.
-                    return ChatTool.CreateFunctionTool(
-                        functionName: tool.Name,
-                        functionDescription: tool.Description,
-                        functionParameters: parameters
-                    );
-                }
-                catch (Exception ex)
-                {
-                    AppendToChat("System", $"도구 {tool.Name} 변환 실패: {ex.Message}");
-                    return null;
-                }
-            })
-            .Where(tool => tool != null)
-            .ToList();
-
-            return openAiTools;
-        }
-        private async void button2_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                string toolName = "echo"; // 검색할 도구 이름
-
-                var clientWithTool = await FindClientByToolNameAsync(toolName);
-
-                if (clientWithTool != null)
-                {
-                    // 도구를 포함하는 클라이언트 발견
-                    MessageBox.Show($"도구 '{toolName}'은(는) '{clientWithTool.ServerName}' 서버에 있습니다.", "도구 찾기 결과");
-
-                    // 필요하다면 해당 클라이언트를 활성 클라이언트로 설정
-                    _mcpClient = clientWithTool;
-
-                    // UI 업데이트 등 추가 작업...
-                }
-                else
-                {
-                    MessageBox.Show($"도구 '{toolName}'을(를) 가진 서버를 찾을 수 없습니다.", "도구 찾기 결과", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-            }
-            catch (Exception ex)
-            {
-                HandleError("도구 목록을 불러오는 중 오류가 발생했습니다.", ex);
-            }
-        }
-        private void UpdateMcpConfigForWindows()
-        {
-            try
-            {
-                string configPath = "mcp_config.json";
-                string json = File.ReadAllText(configPath);
-                JObject config = JObject.Parse(json);
-
-                var servers = config["mcpServers"];
-                if (servers != null)
-                {
-                    // filesystem 서버 구성 확인
-                    var fsServer = servers["filesystem"];
-                    if (fsServer != null)
-                    {
-                        var args = fsServer["args"] as JArray;
-                        if (args != null && args.Count > 0)
-                        {
-                            // 마지막 인자가 경로인 경우 Windows 호환되게 변경
-                            string lastArg = args[args.Count - 1].ToString();
-                            if (lastArg.StartsWith("/"))
-                            {
-                                string winPath = ConvertToWindowsPath(lastArg);
-                                args[args.Count - 1] = winPath;
-
-                                // 변경된 구성 저장
-                                File.WriteAllText(configPath, config.ToString());
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"MCP 구성 파일 수정 오류: {ex.Message}", "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            // 리소스 정리
-            try
-            {
-                // _mcpClient?.Dispose();
-            }
-            catch (Exception ex)
-            {
-                LogError("MCP 클라이언트 종료 중 오류가 발생했습니다.", ex);
-            }
-
-            base.OnFormClosing(e);
-        }
-
-        private async void listBox1_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            if (listBox1.SelectedIndex >= 0 && listBox1.SelectedIndex < _mcpClients.Count)
-            {
-                McpClientWrapper mcpClient = _mcpClients[listBox1.SelectedIndex];
-
-                // 사용 가능한 도구 목록 가져오기
-                var tools = await mcpClient.ListToolsAsync();
-
-                richTextBox3.Clear();
-
-                richTextBox3.AppendText($"서버: {mcpClient.ServerName}\n");
-                richTextBox3.AppendText($"도구 수: {tools.Count}\n\n");
-
-                foreach (var tool in tools)
-                {
-                    richTextBox3.AppendText($"도구 이름: {tool.Name}\n");
-                    richTextBox3.AppendText($"설명: {tool.Description}\n");
-                    richTextBox3.AppendText("-----------------------------------\n");
-                }
-
-            }
-        }
     }
 }
