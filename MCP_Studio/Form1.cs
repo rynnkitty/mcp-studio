@@ -11,6 +11,7 @@ using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol.Transport;
 
 using OpenAI.Chat;
+using System.Text;
 
 namespace MCP_Studio
 {
@@ -207,41 +208,25 @@ namespace MCP_Studio
 
         private async Task ProcessToolCallsAsync(IReadOnlyList<object> toolCalls, ChatCompletionOptions options)
         {
-            // OpenAI SDK 2.1.0에서는 toolCalls의 실제 타입에 따라 처리 방법을 분기합니다
             AppendToChat("System", $"{toolCalls.Count}개의 도구 호출을 처리합니다...");
 
-            // 검증 로직 개선: 메시지 흐름을 확인하는 대신 toolCalls가 있으면 진행
-            if (toolCalls == null || toolCalls.Count == 0)
-            {
-                AppendToChat("System", "처리할 도구 호출이 없습니다.");
-                return;
-            }
+            // 도구 응답을 저장할 변수
+            Dictionary<string, string> toolResponses = new Dictionary<string, string>();
 
-            // 디버깅을 위한 정보 출력
-            var lastMessage = _chatHistory.LastOrDefault();
-            AppendToChat("System", $"마지막 메시지 타입: {lastMessage?.GetType().Name ?? "없음"}");
-
-            // Tool call 처리 로직 계속 진행
+            // 각 tool 호출에 대해 도구 실행
             foreach (var toolCall in toolCalls)
             {
-                // 도구 호출 객체에서 필요한 데이터 추출
                 dynamic dynamicToolCall = toolCall;
-                string functionName = "";
-                BinaryData argumentsBinaryData = null;
-                string toolCallId = "";
-
                 try
                 {
-                    functionName = dynamicToolCall.FunctionName;
-                    argumentsBinaryData = dynamicToolCall.FunctionArguments;
-                    toolCallId = dynamicToolCall.Id;
+                    string functionName = dynamicToolCall.FunctionName;
+                    BinaryData argumentsBinaryData = dynamicToolCall.FunctionArguments;
+                    string toolCallId = dynamicToolCall.Id;
 
-                    // BinaryData를 UTF-8 문자열로 변환
                     string argumentsJson = argumentsBinaryData.ToString();
                     AppendToChat("System", $"도구 호출: {functionName}");
                     AppendToChat("System", $"인자: {argumentsJson}");
 
-                    // JSON 문자열을 Dictionary로 역직렬화
                     var parameters = JsonConvert.DeserializeObject<Dictionary<string, object>>(argumentsJson);
 
                     if (_mcpClient == null)
@@ -250,76 +235,86 @@ namespace MCP_Studio
                         continue;
                     }
 
-                    // 도구 호출 실행
                     string mcpResponse = await _mcpClient.CallToolAsync(functionName, parameters);
                     AppendToChat("System", $"도구 응답: {mcpResponse}");
 
-                    // 채팅 이력에 필요한 메시지 추가
-                    // 이 부분이 중요: OpenAI 2.1.0에서는 메시지 형식이 변경되었습니다
-
-                    // 먼저 tool_calls를 포함한 assistant 메시지가 있는지 확인
-                    bool hasAssistantWithToolCalls = _chatHistory.Any(m =>
-                        m is AssistantChatMessage &&
-                        // tool_calls 속성이 있는지 확인하는 로직이 필요할 수 있음
-                        // 이는 AssistantChatMessage 클래스의 구현에 따라 달라짐
-                        true);
-
-                    // 만약 없다면 가상의 assistant 메시지를 추가
-                    if (!hasAssistantWithToolCalls)
-                    {
-                        // 가상의 assistant 메시지를 추가하거나
-                        // 또는 OpenAI API 호출 방식을 변경
-                        AppendToChat("System", "Tool call을 위한 assistant 메시지를 추가합니다.");
-                        // 여기서는 기존 메시지로 계속 진행하기로 결정
-                    }
-
-                    // tool 메시지 추가
-                    var toolMessage = new ToolChatMessage(toolCallId, functionName, mcpResponse);
-
-                    // 이미 같은 ID의 tool 메시지가 있는지 확인 (중복 방지)
-                    bool toolMessageExists = _chatHistory.Any(m =>
-                        m is ToolChatMessage tm &&
-                        tm.ToolCallId == toolCallId);
-
-                    if (!toolMessageExists)
-                    {
-                        _chatHistory.Add(toolMessage);
-                    }
-                }
-                catch (JsonException ex)
-                {
-                    AppendToChat("System", $"도구 호출 인자 파싱 실패: {ex.Message}");
-                    continue;
+                    // 도구 응답 저장
+                    toolResponses[functionName] = mcpResponse;
                 }
                 catch (Exception ex)
                 {
                     AppendToChat("System", $"도구 실행 실패: {ex.Message}");
-                    continue;
                 }
             }
 
+            // 원래 대화 내용 유지하면서 새로운 요청을 준비
+            // 도구 응답을 포함한 새 사용자 메시지 생성
+            StringBuilder toolResultsMessage = new StringBuilder();
+            toolResultsMessage.AppendLine("도구 실행 결과:");
+
+            foreach (var response in toolResponses)
+            {
+                toolResultsMessage.AppendLine($"- {response.Key}: {response.Value}");
+            }
+
+            // 사용자 메시지 추가
+            _chatHistory.Add(new UserChatMessage(toolResultsMessage.ToString()));
+
             try
             {
-                // 도구 호출 이후 최종 응답 요청
+                // 새 요청 생성 
+                // OpenAI API에서 사용하는 방식에 맞게 조정
+                // 필요한 경우 새로운 ChatCompletionRequest 객체 생성
+
+                // 예: options 객체가 어떻게 사용되는지 확인하고 필요시 수정
+                // var request = new ChatCompletionRequest { ... }; 
+
+                // 직접 API 호출을 위한 대안 방법
+                // 여기에서는 SDK의 CompleteChatAsync 메서드를 사용하지만,
+                // 필요시 더 낮은 수준의 API 호출로 대체할 수 있음
                 var finalResponse = await _chatClient.CompleteChatAsync(_chatHistory, options);
 
-                if (finalResponse.Value.Content != null && finalResponse.Value.Content.Count > 0)
+                // 응답 처리 및 디버깅을 위한 추가 정보
+                AppendToChat("System", $"응답 상태: {finalResponse.Value != null}");
+
+                if (finalResponse.Value != null &&
+                    finalResponse.Value.Content != null &&
+                    finalResponse.Value.Content.Count > 0)
                 {
-                    var assistantReply = finalResponse.Value.Content[0].Text.Trim();
-                    AppendToChat("ChatGPT", assistantReply);
-                    _chatHistory.Add(new AssistantChatMessage(assistantReply));
+                    var assistantReply = finalResponse.Value.Content[0].Text?.Trim();
+                    if (!string.IsNullOrEmpty(assistantReply))
+                    {
+                        AppendToChat("ChatGPT", assistantReply);
+                        _chatHistory.Add(new AssistantChatMessage(assistantReply));
+                    }
+                    else
+                    {
+                        AppendToChat("System", "GPT 응답이 비어 있습니다.");
+                        // 대체 응답 추가
+                        string fallbackReply = "도구 실행 결과를 확인했습니다.";
+                        AppendToChat("ChatGPT", fallbackReply);
+                        _chatHistory.Add(new AssistantChatMessage(fallbackReply));
+                    }
                 }
                 else
                 {
                     AppendToChat("System", "도구 호출 후 GPT 응답이 없습니다.");
+                    // 대체 응답 추가
+                    string fallbackReply = "도구가 실행되었습니다.";
+                    AppendToChat("ChatGPT", fallbackReply);
+                    _chatHistory.Add(new AssistantChatMessage(fallbackReply));
                 }
             }
             catch (Exception ex)
             {
-                // 더 자세한 에러 정보 출력
                 AppendToChat("System", $"최종 응답 요청 실패: {ex.Message}");
                 AppendToChat("System", $"스택 트레이스: {ex.StackTrace}");
                 HandleError("도구 호출 후 최종 응답 요청 실패", ex);
+
+                // 오류 발생시 대체 응답 추가
+                string errorReply = "도구 실행 후 응답을 받는데 문제가 발생했습니다.";
+                AppendToChat("ChatGPT", errorReply);
+                _chatHistory.Add(new AssistantChatMessage(errorReply));
             }
         }
 
